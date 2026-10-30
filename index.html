@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Smart Powerline Monitor</title>
+<style>
+:root{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#172033;background:#f3f6fb}
+*{box-sizing:border-box}body{margin:0}header{background:#102746;color:white;padding:22px 16px}
+header h1{margin:0;font-size:clamp(1.25rem,4vw,2rem)}header p{margin:8px 0 0;color:#c9d8ed}
+main{max-width:1100px;margin:auto;padding:18px}.bar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;background:white;border-radius:14px;padding:14px;box-shadow:0 3px 14px #182b4910}
+button{border:0;border-radius:9px;padding:10px 14px;background:#1769d2;color:white;font-weight:700;cursor:pointer}button.secondary{background:#e7edf6;color:#172033}
+input{padding:10px;border:1px solid #c8d3e3;border-radius:8px;min-width:210px;max-width:100%}
+.small{font-size:.88rem;color:#58677d}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px;margin:16px 0}
+.card{background:white;border-radius:14px;padding:18px;box-shadow:0 3px 14px #182b4910}.label{color:#66758b;font-size:.9rem}.value{font-size:2rem;font-weight:750;margin:7px 0}.status{font-weight:750;padding:6px 10px;border-radius:999px;display:inline-block;background:#e6f7ed;color:#13753a}.warn{background:#fff3d9;color:#8a5700}.fault{background:#ffe7e7;color:#a01818}
+canvas{width:100%;height:240px;border:1px solid #e1e8f1;border-radius:10px}.mapframe{width:100%;height:330px;border:0;border-radius:10px;background:#edf1f6}.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}
+footer{padding:18px;text-align:center;color:#69778b;font-size:.85rem}
+code{background:#eef2f7;padding:2px 5px;border-radius:4px;overflow-wrap:anywhere}
+</style>
+</head>
+<body>
+<header><h1>⚡ Smart Powerline Monitor</h1><p>Arduino Uno • Live sensor dashboard • Fault status • Location map</p></header>
+<main>
+<div class="bar">
+<label for="mode">Data source</label>
+<select id="mode" style="padding:10px;border:1px solid #c8d3e3;border-radius:8px">
+<option value="demo">Demo values (preview)</option><option value="thingspeak">ThingSpeak channel</option>
+</select>
+<label for="channel">Channel ID</label><input id="channel" placeholder="ThingSpeak Channel ID">
+<label for="readkey">Read API key (if private)</label><input id="readkey" placeholder="Optional read key" type="password">
+<button id="connect">Connect / Refresh</button><button id="locate" class="secondary">Use this device location</button>
+</div>
+<p class="small" id="message">Demo mode is active. Choose ThingSpeak and enter your channel details to load published readings.</p>
+<div class="grid">
+<div class="card"><div class="label">Voltage</div><div class="value" id="voltage">-- V</div><div class="small">Field 1</div></div>
+<div class="card"><div class="label">Current</div><div class="value" id="current">-- A</div><div class="small">Field 2</div></div>
+<div class="card"><div class="label">Temperature</div><div class="value" id="temperature">-- °C</div><div class="small">Field 3</div></div>
+<div class="card"><div class="label">Vibration</div><div class="value" id="vibration">--</div><div class="small">Field 4</div></div>
+<div class="card"><div class="label">Relay</div><div class="value" id="relay">--</div><div class="small">Field 5</div></div>
+<div class="card"><div class="label">Fault status</div><div class="value"><span id="fault" class="status">WAITING</span></div><div class="small">Field 6 (1 = fault, 0 = normal)</div></div>
+</div>
+<div class="row">
+<section class="card"><h2>Recent readings</h2><canvas id="chart" width="900" height="260"></canvas><p class="small">Chart shows recent voltage values from the selected data source.</p></section>
+<section class="card"><h2>Device location</h2><p class="small">Browser location marks this laptop/phone, not necessarily the Arduino. For the Arduino's actual location, add a GPS module and send latitude/longitude to a map service.</p><p id="coords">Location not set.</p><iframe id="map" class="mapframe" title="Map" loading="lazy" src="https://maps.google.com/maps?q=Chennai&t=&z=10&ie=UTF8&iwloc=&output=embed"></iframe></section>
+</div>
+<section class="card"><h2>How to connect the real Arduino data</h2>
+<ol>
+<li>Configure a ThingSpeak channel with fields: 1 Voltage, 2 Current, 3 Temperature, 4 Vibration, 5 Relay status, 6 Fault status.</li>
+<li>Use a laptop program (for example, Python or MATLAB) to read Arduino serial data and upload each reading to ThingSpeak. The Arduino Uno alone has no built-in Wi-Fi.</li>
+<li>Choose <b>ThingSpeak channel</b> above, enter your Channel ID and optional read key, then click <b>Connect / Refresh</b>. This dashboard refreshes every 15 seconds while ThingSpeak is selected.</li>
+</ol>
+<p class="small"><b>Privacy:</b> A public ThingSpeak channel can be read by anyone who knows its channel ID. Keep channels private and use a read key when appropriate. Never enter a write key here.</p>
+</section>
+<section class="card"><h2>Safety</h2><p>This is a monitoring dashboard, not certified protection equipment. Test with low-voltage DC only. Do not connect generic Arduino sensors directly to household 230 V AC. Relay protection should operate locally on the Arduino and must be tested with a safe low-voltage demo load.</p></section>
+</main>
+<footer>Smart Powerline Monitor • Demo dashboard</footer>
+<script>
+const $=id=>document.getElementById(id);
+let timer=null, history=[];
+function setData(d,stamp=''){
+ $('voltage').textContent=d.v==null?'-- V':Number(d.v).toFixed(2)+' V';
+ $('current').textContent=d.a==null?'-- A':Number(d.a).toFixed(2)+' A';
+ $('temperature').textContent=d.t==null?'-- °C':Number(d.t).toFixed(1)+' °C';
+ $('vibration').textContent=d.vib==null?'--':(Number(d.vib)?'DETECTED':'Normal');
+ $('relay').textContent=d.relay==null?'--':(String(d.relay)==='1'?'ON':String(d.relay)==='0'?'OFF':String(d.relay));
+ const f=$('fault'); const bad=String(d.fault)==='1'||String(d.status||'').toUpperCase()==='FAULT';
+ f.textContent=bad?'FAULT':(d.status||'NORMAL'); f.className='status '+(bad?'fault':(String(d.status||'').toUpperCase()==='WARNING'?'warn':''));
+ if(stamp) $('message').textContent='Last update: '+stamp;
+ if(d.v!=null){history.push(Number(d.v));if(history.length>40)history.shift();drawChart();}
+}
+function drawChart(){
+ const c=$('chart'),ctx=c.getContext('2d'),w=c.width,h=c.height;ctx.clearRect(0,0,w,h);
+ ctx.strokeStyle='#dce4ef';ctx.lineWidth=1;
+ for(let i=1;i<5;i++){ctx.beginPath();ctx.moveTo(30,h*i/5);ctx.lineTo(w-15,h*i/5);ctx.stroke();}
+ if(history.length<2)return;
+ let min=Math.min(...history),max=Math.max(...history);if(max===min){max+=1;min-=1}
+ ctx.strokeStyle='#1769d2';ctx.lineWidth=3;ctx.beginPath();
+ history.forEach((v,i)=>{const x=30+i*(w-50)/(history.length-1),y=h-20-(v-min)*(h-40)/(max-min);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.stroke();
+ ctx.fillStyle='#44546a';ctx.font='14px sans-serif';ctx.fillText('Voltage (V)',35,18);
+}
+function demo(){
+ const d={v:12+(Math.random()-.5)*.3,a:.45+Math.random()*.08,t:29+Math.random()*2,vib:0,relay:'ON',fault:0,status:'NORMAL'};
+ setData(d,new Date().toLocaleTimeString()+' (demo data)');
+}
+async function fetchThingSpeak(){
+ const id=$('channel').value.trim(),key=$('readkey').value.trim();
+ if(!id){$('message').textContent='Enter your ThingSpeak Channel ID first.';return;}
+ let url=`https://api.thingspeak.com/channels/${encodeURIComponent(id)}/feeds/last.json`;
+ if(key)url+=`?api_key=${encodeURIComponent(key)}`;
+ try{
+  const r=await fetch(url);if(!r.ok)throw new Error('HTTP '+r.status);
+  const x=await r.json();
+  if(x.error)throw new Error(x.error);
+  const n=k=>x['field'+k]===null||x['field'+k]===undefined?null:Number(x['field'+k]);
+  setData({v:n(1),a:n(2),t:n(3),vib:n(4),relay:n(5),fault:n(6),status:n(6)===1?'FAULT':'NORMAL'},x.created_at||new Date().toLocaleTimeString());
+  $('message').textContent='Connected to ThingSpeak. Last channel entry: '+(x.created_at||'time unavailable');
+ }catch(e){$('message').textContent='Could not load ThingSpeak data: '+e.message+'. Check channel ID, read key, fields and internet.';}
+}
+function start(){
+ if(timer)clearInterval(timer);
+ if($('mode').value==='demo'){demo();timer=setInterval(demo,2000);}
+ else{fetchThingSpeak();timer=setInterval(fetchThingSpeak,15000);}
+}
+$('connect').addEventListener('click',start);
+$('mode').addEventListener('change',start);
+$('locate').addEventListener('click',()=>{
+ if(!navigator.geolocation){$('coords').textContent='Geolocation is not supported by this browser.';return;}
+ $('coords').textContent='Requesting permission...';
+ navigator.geolocation.getCurrentPosition(pos=>{
+  const lat=pos.coords.latitude,lon=pos.coords.longitude;
+  $('coords').textContent=`Latitude: ${lat.toFixed(6)}, Longitude: ${lon.toFixed(6)}`;
+  $('map').src=`https://maps.google.com/maps?q=${lat},${lon}&z=16&output=embed`;
+ },err=>{$('coords').textContent='Location unavailable: '+err.message+'. Use HTTPS and allow location permission.';},{enableHighAccuracy:true,timeout:10000});
+});
+start();
+</script>
+</body></html>
